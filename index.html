@@ -240,11 +240,6 @@
   #seed-status{font-size:12px;color:var(--cream-dim);margin-top:10px;min-height:16px;}
   #print-header{display:none;}
 
-  .mode-banner{
-    font-size:12px;line-height:1.5;color:var(--amber);background:var(--amber-dim);
-    border:1px solid var(--amber);border-radius:10px;padding:10px 14px;margin-bottom:16px;
-  }
-
   .app-footer{
     text-align:center;padding:30px 18px 6px;font-size:12px;color:var(--cream-dim);
   }
@@ -256,7 +251,7 @@
     body.printing{background:#fff;color:#000;}
     body.printing .wrap{max-width:100%;padding:0;}
     body.printing header.top, body.printing nav.tabs, body.printing .toast,
-    body.printing #mode-banner, body.printing .app-footer,
+    body.printing .app-footer,
     body.printing #panel-scan, body.printing #panel-gestion, body.printing #btn-print-stats{
       display:none !important;
     }
@@ -281,8 +276,6 @@
     <div class="eyebrow">Contrôle d'accès</div>
     <h1>Carte de <span>Dîner</span></h1>
   </header>
-
-  <div id="mode-banner" class="mode-banner" style="display:none;"></div>
 
   <nav class="tabs">
     <button class="tab-btn active" data-tab="scan">Scanner</button>
@@ -1084,23 +1077,6 @@ window.addEventListener('afterprint', ()=>{
   document.body.classList.remove('printing');
 });
 
-function showModeBanner(){
-  const banner = document.getElementById('mode-banner');
-  const isSecure = window.isSecureContext || location.protocol === 'https:' || location.hostname === 'localhost';
-  const msgs = [];
-  if(!hasCloudStorage){
-    msgs.push("Mode fichier local : les cartes enregistrées restent uniquement sur ce téléphone/navigateur (non partagées avec les autres appareils).");
-  }
-  if(!isSecure){
-    msgs.push("Le scan caméra est désactivé ici (nécessite HTTPS) — utilisez l'import d'image ou la saisie manuelle, ou hébergez ce fichier en ligne.");
-  }
-  if(msgs.length){
-    banner.textContent = msgs.join(' ');
-    banner.style.display = 'block';
-  }
-}
-
-showModeBanner();
 refreshCardsList();
 ensureSeeded();
 </script>
