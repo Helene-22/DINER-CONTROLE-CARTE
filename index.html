@@ -89,6 +89,30 @@
   .scan-frame{
     position:absolute;inset:12%;border:2px solid var(--gold);border-radius:16px;
     box-shadow:0 0 0 2000px rgba(0,0,0,.35);pointer-events:none;
+    transition:border-color .15s, box-shadow .15s;
+  }
+  .scan-frame.flash{
+    border-color:var(--green);
+    box-shadow:0 0 0 2000px rgba(0,0,0,.35), 0 0 0 6px rgba(90,200,120,.55), 0 0 24px 8px rgba(90,200,120,.5);
+    animation:scanFlashPulse .45s ease-out;
+  }
+  @keyframes scanFlashPulse{
+    0%{ transform:scale(1); }
+    30%{ transform:scale(1.03); }
+    100%{ transform:scale(1); }
+  }
+  .scan-frame .scan-check{
+    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    opacity:0;font-size:48px;color:var(--green);
+  }
+  .scan-frame.flash .scan-check{
+    animation:scanCheckPop .45s ease-out;
+  }
+  @keyframes scanCheckPop{
+    0%{ opacity:0; transform:scale(.5); }
+    35%{ opacity:1; transform:scale(1.15); }
+    70%{ opacity:1; transform:scale(1); }
+    100%{ opacity:0; transform:scale(1); }
   }
   .scan-hint{position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:12px;color:var(--gold-soft);}
 
@@ -102,6 +126,8 @@
   .btn-green{background:var(--green);color:#0B2418;}
   .btn-ghost{background:var(--bg-panel-2);color:var(--cream);border:1px solid var(--line);}
   .btn-outline{background:transparent;color:var(--gold-soft);border:1px solid var(--gold);}
+  .btn-danger{background:transparent;color:var(--red);border:1px solid var(--red);}
+  .btn-sm{padding:9px 12px;font-size:13px;}
   .btn:disabled{opacity:.45;cursor:not-allowed;}
 
   .row{display:flex;gap:10px;}
@@ -638,6 +664,7 @@ async function startCamera(){
     box.appendChild(video);
     const frame = document.createElement('div');
     frame.className = 'scan-frame';
+    frame.innerHTML = '<div class="scan-check">✓</div>';
     box.appendChild(frame);
     video.srcObject = stream;
     await video.play();
@@ -661,6 +688,7 @@ function stopCamera(){
   document.getElementById('btn-switch-camera').style.display = 'none';
 }
 document.getElementById('btn-camera').addEventListener('click', ()=>{
+  unlockAudio();
   if(stream) stopCamera(); else startCamera();
 });
 document.getElementById('btn-switch-camera').addEventListener('click', ()=>{
@@ -672,6 +700,45 @@ document.getElementById('btn-switch-camera').addEventListener('click', ()=>{
 const canvas = document.createElement('canvas');
 const ctx = canvas.getContext('2d', {willReadFrequently:true});
 let lastScanTime = 0;
+
+/* ---------- Scan feedback: beep + flash + vibrate ---------- */
+let audioCtx = null;
+function unlockAudio(){
+  try{
+    if(!audioCtx){ audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+    if(audioCtx.state === 'suspended'){ audioCtx.resume(); }
+  }catch(e){ /* Web Audio unavailable */ }
+}
+function playBeep(){
+  if(!audioCtx) return;
+  try{
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 920;
+    const t = audioCtx.currentTime;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.25, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.18);
+  }catch(e){ /* ignore */ }
+}
+function flashScanFrame(){
+  const frame = document.querySelector('#video-box .scan-frame');
+  if(!frame) return;
+  frame.classList.remove('flash');
+  void frame.offsetWidth; // restart animation
+  frame.classList.add('flash');
+  setTimeout(()=>frame.classList.remove('flash'), 500);
+}
+function scrollToResult(){
+  setTimeout(()=>{
+    const el = document.getElementById('result-zone');
+    if(el) el.scrollIntoView({behavior:'smooth', block:'start'});
+  }, 60);
+}
 function scanLoop(){
   if(!stream) return;
   try{
@@ -684,6 +751,8 @@ function scanLoop(){
       if(code && code.data && Date.now() - lastScanTime > 1500){
         lastScanTime = Date.now();
         navigator.vibrate && navigator.vibrate(80);
+        flashScanFrame();
+        playBeep();
         handleScan(code.data.trim());
       }
     }
@@ -696,6 +765,7 @@ function scanLoop(){
 
 /* ---------- Scanner: image upload ---------- */
 document.getElementById('file-input').addEventListener('change', (e)=>{
+  unlockAudio();
   const file = e.target.files[0];
   if(!file) return;
   const reader = new FileReader();
@@ -707,6 +777,7 @@ document.getElementById('file-input').addEventListener('change', (e)=>{
       const data = ctx.getImageData(0,0,canvas.width,canvas.height);
       const result = jsQR(data.data, data.width, data.height);
       if(result && result.data){
+        playBeep();
         handleScan(result.data.trim());
       }else{
         showToast('Aucun QR code détecté dans cette image');
@@ -732,6 +803,7 @@ async function handleScan(rawCode){
   const code = rawCode.toUpperCase();
   const zone = document.getElementById('result-zone');
   zone.innerHTML = '<div class="muted" style="text-align:center;padding:20px;">Vérification…</div>';
+  scrollToResult();
   const card = await getCard(code);
   if(!card){
     renderUnknown(code);
@@ -803,6 +875,16 @@ function renderCard(card){
     html += `<div class="muted" style="text-align:center;">Cette carte a déjà été utilisée pour entrer.</div>`;
   }
   html += `</div>`;
+  if(card.paye || card.entree){
+    html += `<div class="row" style="margin-top:8px;">`;
+    if(card.entree){
+      html += `<button class="btn btn-danger btn-sm" id="btn-cancel-entree" style="flex:1;">Annuler l'entrée</button>`;
+    }
+    if(card.paye){
+      html += `<button class="btn btn-danger btn-sm" id="btn-cancel-paye" style="flex:1;">Annuler le paiement</button>`;
+    }
+    html += `</div>`;
+  }
   if(card.entree){
     html += `<div class="stamp">ENTRÉE<br>${timeFmt(card.entree_at).split(' ')[1]||''}</div>`;
   }
@@ -823,6 +905,25 @@ function renderCard(card){
     card.entree_at = Date.now();
     await saveCard(card);
     showToast('Entrée enregistrée');
+    renderCard(card);
+  });
+  const bCancelEnt = zone.querySelector('#btn-cancel-entree');
+  if(bCancelEnt) bCancelEnt.addEventListener('click', async ()=>{
+    if(!confirm("Annuler l'entrée enregistrée pour cette carte ?")) return;
+    card.entree = false;
+    card.entree_at = null;
+    await saveCard(card);
+    showToast('Entrée annulée');
+    renderCard(card);
+  });
+  const bCancelPaye = zone.querySelector('#btn-cancel-paye');
+  if(bCancelPaye) bCancelPaye.addEventListener('click', async ()=>{
+    if(card.entree && !confirm("Cette carte a déjà servi à entrer. Annuler quand même le paiement ?")) return;
+    if(!card.entree && !confirm('Annuler le paiement de cette carte ?')) return;
+    card.paye = false;
+    card.paye_at = null;
+    await saveCard(card);
+    showToast('Paiement annulé');
     renderCard(card);
   });
 }
