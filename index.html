@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
@@ -615,6 +615,12 @@ async function startCamera(){
   if(!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)){
     box.innerHTML = "<div class=\"muted\" style=\"padding:0 16px;text-align:center;\">La caméra nécessite une connexion sécurisée (HTTPS) et un navigateur récent.<br>Utilisez plutôt l'import d'image ou la saisie manuelle.</div>";
     showToast('Caméra indisponible sur ce navigateur');
+    return;
+  }
+
+  if(typeof jsQR !== 'function'){
+    box.innerHTML = "<div class=\"muted\" style=\"padding:0 16px;text-align:center;\">La librairie de lecture des QR codes n'a pas pu se charger (pas de connexion internet au chargement de la page ?).<br>Rechargez la page avec une bonne connexion, ou utilisez la saisie manuelle.</div>";
+    showToast('Librairie de scan non chargée — rechargez la page');
     return;
   }
 
