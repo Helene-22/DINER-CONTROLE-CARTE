@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Contrôle des cartes — Soirée de gala</title>
+<title>Contrôle d'accès — Carte de Dîner</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -12,22 +12,23 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
-    --bg-deep:#0D1C2B;
-    --bg-panel:#132A3E;
-    --bg-panel-2:#1A3448;
-    --line:#28455C;
+    --bg-deep:#241531;
+    --bg-panel:#2F1D40;
+    --bg-panel-2:#3B2551;
+    --line:#5A3E73;
     --gold:#D4AF37;
     --gold-soft:#E8CB74;
-    --platinum:#C9D3DB;
-    --cream:#F3EFE4;
-    --cream-dim:#B8C2CB;
+    --platinum:#E7DFF2;
+    --cream:#FBF8FF;
+    --cream-dim:#C9B8DC;
     --green:#4FAE7E;
     --green-dim:#173B2C;
     --amber:#E0A93A;
     --amber-dim:#3E2E10;
     --red:#DD6B5C;
     --red-dim:#3E1F1A;
-    --vip:#B98CCB;
+    --vip:#E07FAE;
+    --violet:#9B6BC9;
     --radius:14px;
   }
   *{box-sizing:border-box;}
@@ -35,8 +36,10 @@
   body{
     background: var(--bg-deep);
     background-image:
-      radial-gradient(circle at 15% 0%, rgba(212,175,55,0.07), transparent 45%),
-      radial-gradient(circle at 90% 100%, rgba(79,174,126,0.06), transparent 40%);
+      radial-gradient(circle at 12% 0%, rgba(212,175,55,0.12), transparent 42%),
+      radial-gradient(circle at 92% 8%, rgba(155,107,201,0.20), transparent 40%),
+      radial-gradient(circle at 15% 85%, rgba(224,127,174,0.10), transparent 45%),
+      radial-gradient(circle at 90% 100%, rgba(212,175,55,0.08), transparent 40%);
     color: var(--cream);
     font-family: 'Manrope', sans-serif;
     min-height: 100vh;
@@ -63,7 +66,7 @@
     font-family:'Manrope',sans-serif;font-weight:700;font-size:13px;
     padding:10px 6px;border-radius:999px;cursor:pointer;transition:.15s;
   }
-  nav.tabs button.active{background:var(--gold);color:#241B04;}
+  nav.tabs button.active{background-image:linear-gradient(135deg, #F1DE9E, var(--gold) 60%, #B8862A);color:#241B04;}
 
   .panel{display:none;}
   .panel.active{display:block;animation:fade .25s ease;}
@@ -81,7 +84,7 @@
 
   /* Scanner */
   #video-box{
-    position:relative;width:100%;aspect-ratio:1/1;background:#081420;
+    position:relative;width:100%;aspect-ratio:1/1;background:#170D22;
     border-radius:var(--radius);overflow:hidden;border:1px solid var(--line);
     display:flex;align-items:center;justify-content:center;
   }
@@ -119,14 +122,17 @@
   .btn{
     display:inline-flex;align-items:center;justify-content:center;gap:8px;
     border:none;border-radius:10px;font-family:'Manrope',sans-serif;font-weight:700;
-    font-size:14px;padding:13px 18px;cursor:pointer;width:100%;transition:.12s;
+    font-size:14px;padding:13px 18px;cursor:pointer;width:100%;transition:filter .12s, transform .1s;
+    background-size:160% 160%;background-position:0% 50%;
   }
-  .btn:active{transform:scale(.98);}
-  .btn-gold{background:var(--gold);color:#241B04;}
-  .btn-green{background:var(--green);color:#0B2418;}
-  .btn-ghost{background:var(--bg-panel-2);color:var(--cream);border:1px solid var(--line);}
+  .btn:active{transform:scale(.97);filter:brightness(.82) saturate(1.15);background-position:100% 50%;}
+  .btn-gold{background-image:linear-gradient(135deg, #F1DE9E 0%, var(--gold) 45%, #B8862A 100%);color:#241B04;}
+  .btn-green{background-image:linear-gradient(135deg, #8FE0B8 0%, var(--green) 45%, #2E7C57 100%);color:#0B2418;}
+  .btn-ghost{background-image:linear-gradient(135deg, var(--bg-panel-2), #2A1A3A);color:var(--cream);border:1px solid var(--line);}
   .btn-outline{background:transparent;color:var(--gold-soft);border:1px solid var(--gold);}
   .btn-danger{background:transparent;color:var(--red);border:1px solid var(--red);}
+  .btn-danger:active{background-image:linear-gradient(135deg, var(--red-dim), #5A2A22);filter:brightness(1.1);}
+  .btn-outline:active{background-image:linear-gradient(135deg, var(--amber-dim), #4A3210);filter:brightness(1.1);}
   .btn-sm{padding:9px 12px;font-size:13px;}
   .btn:disabled{opacity:.45;cursor:not-allowed;}
 
@@ -145,7 +151,7 @@
     position:relative;border-radius:16px;padding:22px 20px 20px;margin-top:16px;
     background:var(--bg-panel);border:1px solid var(--line);overflow:hidden;
   }
-  .ticket.tier-5000{border-color:#5A6E7E;}
+  .ticket.tier-5000{border-color:#8C7AA6;}
   .ticket.tier-10000{border-color:var(--gold);}
   .ticket.tier-vip{border-color:var(--vip);}
   .ticket::before{
@@ -239,10 +245,18 @@
     border:1px solid var(--amber);border-radius:10px;padding:10px 14px;margin-bottom:16px;
   }
 
+  .app-footer{
+    text-align:center;padding:30px 18px 6px;font-size:12px;color:var(--cream-dim);
+  }
+  .app-footer .brand{color:#4FA3E8;font-weight:700;letter-spacing:.03em;font-size:13px;}
+  .app-footer .brand strong{color:#4FA3E8;}
+  .app-footer .tel{margin-top:4px;color:#4FA3E8;}
+
   @media print{
     body.printing{background:#fff;color:#000;}
     body.printing .wrap{max-width:100%;padding:0;}
     body.printing header.top, body.printing nav.tabs, body.printing .toast,
+    body.printing #mode-banner, body.printing .app-footer,
     body.printing #panel-scan, body.printing #panel-gestion, body.printing #btn-print-stats{
       display:none !important;
     }
@@ -265,7 +279,7 @@
 
   <header class="top">
     <div class="eyebrow">Contrôle d'accès</div>
-    <h1>Cartes de <span>Gala</span></h1>
+    <h1>Carte de <span>Dîner</span></h1>
   </header>
 
   <div id="mode-banner" class="mode-banner" style="display:none;"></div>
@@ -365,7 +379,7 @@
   <!-- STATS -->
   <section class="panel" id="panel-stats">
     <div id="print-header">
-      <h2>Cartes de Gala — Rapport statistiques</h2>
+      <h2>Contrôle d'accès — Carte de Dîner — Rapport statistiques</h2>
       <div id="print-meta"></div>
     </div>
     <div class="card">
@@ -383,6 +397,11 @@
     </div>
     <button class="btn btn-ghost" id="btn-print-stats">Imprimer le rapport</button>
   </section>
+
+  <div class="app-footer">
+    <div class="brand">Réalisé par <strong>WEBSI-THIES</strong></div>
+    <div class="tel">Tel: 774933008</div>
+  </div>
 
 </div>
 
@@ -959,7 +978,7 @@ document.getElementById('btn-create-card').addEventListener('click', async ()=>{
   const resBox = document.getElementById('new-card-result');
   const qrTarget = document.getElementById('qr-target');
   qrTarget.innerHTML = '';
-  new QRCode(qrTarget, {text: code, width:180, height:180, colorDark:'#0D1C2B', colorLight:'#ffffff'});
+  new QRCode(qrTarget, {text: code, width:180, height:180, colorDark:'#241531', colorLight:'#ffffff'});
   document.getElementById('new-card-code').textContent = code + (nom ? ' — '+nom : '');
   resBox.style.display = 'block';
   btn.disabled = false; btn.textContent = 'Générer la carte';
