@@ -10,6 +10,9 @@
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <style>
   :root{
     --bg-deep:#3A0D16;
@@ -139,11 +142,13 @@
   .row{display:flex;gap:10px;}
   .row > *{flex:1;}
 
-  input[type=text], select{
+  input[type=text], input[type=email], input[type=password], select{
     width:100%;background:var(--bg-panel-2);border:1px solid var(--line);color:var(--cream);
     border-radius:10px;padding:12px 14px;font-family:'Manrope',sans-serif;font-size:14px;
   }
-  input[type=text]:focus, select:focus{outline:2px solid var(--gold);outline-offset:1px;}
+  input[type=text]:focus, input[type=email]:focus, input[type=password]:focus, select:focus{outline:2px solid var(--gold);outline-offset:1px;}
+  #user-bar{display:none;align-items:center;justify-content:center;gap:10px;margin-top:8px;font-size:12px;color:var(--cream-dim);}
+  #user-bar .btn{width:auto;}
   label.field-label{font-size:12px;color:var(--cream-dim);font-weight:700;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px;}
 
   /* Résultat ticket */
@@ -252,7 +257,8 @@
     body.printing .wrap{max-width:100%;padding:0;}
     body.printing header.top, body.printing nav.tabs, body.printing .toast,
     body.printing .app-footer,
-    body.printing #panel-scan, body.printing #panel-gestion, body.printing #btn-print-stats{
+    body.printing #panel-scan, body.printing #panel-gestion, body.printing #btn-print-stats,
+    body.printing #export-card, body.printing #login-panel, body.printing #user-bar{
       display:none !important;
     }
     body.printing #panel-stats{display:block !important;}
@@ -275,8 +281,26 @@
   <header class="top">
     <div class="eyebrow">Contrôle d'accès</div>
     <h1>Carte de <span>Dîner</span></h1>
+    <div class="muted" id="db-status" style="font-size:11px;margin-top:6px;"></div>
+    <div id="user-bar">
+      <span id="user-email"></span>
+      <button class="btn btn-outline btn-sm" id="btn-logout">Déconnexion</button>
+    </div>
   </header>
 
+  <!-- CONNEXION (personnel à l'entrée uniquement) -->
+  <section class="card" id="login-panel" style="display:none;">
+    <h3>Connexion du personnel</h3>
+    <div class="muted" style="margin-bottom:14px;">Accès réservé aux contrôleurs à l'entrée. Utilisez l'email et le mot de passe qui vous ont été remis.</div>
+    <label class="field-label">Email</label>
+    <input type="email" id="login-email" autocomplete="username" style="margin-bottom:12px;">
+    <label class="field-label">Mot de passe</label>
+    <input type="password" id="login-password" autocomplete="current-password">
+    <button class="btn btn-gold" id="btn-login" style="margin-top:14px;">Se connecter</button>
+    <div id="login-error" style="color:var(--red);font-size:13px;margin-top:10px;min-height:16px;"></div>
+  </section>
+
+  <div id="app-main">
   <nav class="tabs">
     <button class="tab-btn active" data-tab="scan">Scanner</button>
     <button class="tab-btn" data-tab="gestion">Gestion</button>
@@ -399,7 +423,13 @@
       <div id="stats-detail" class="muted">Chargement…</div>
     </div>
     <button class="btn btn-ghost" id="btn-print-stats">Imprimer le rapport</button>
+    <div class="card" id="export-card" style="margin-top:16px;">
+      <h3>Sauvegarde de secours</h3>
+      <div class="muted">Télécharge toutes les cartes (payée / entrée / heure) dans un fichier Excel. À faire avant l'ouverture des portes et régulièrement pendant la soirée : si internet coupe, les contrôleurs peuvent continuer avec cette liste.</div>
+      <button class="btn btn-outline" id="btn-export-excel" style="margin-top:14px;">Exporter en Excel</button>
+    </div>
   </section>
+  </div>
 
   <div class="app-footer">
     <div class="brand">Réalisé par <strong>WEBSI-THIES</strong></div>
@@ -450,69 +480,246 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
 });
 
 /* ---------- Storage layer ----------
-   Uses window.storage (shared, cross-device) when available — i.e. when opened
-   as a Claude Artifact. Falls back to the browser's localStorage when this file
-   is opened directly (e.g. saved and double-tapped on a phone), so the app still
-   works standalone — but then data stays on that one device/browser only, and
-   isn't shared with other gate-staff phones. */
-const hasCloudStorage = !!(window.storage && typeof window.storage.get === 'function');
+   Firebase Firestore (shared between all gate-staff phones) once FIREBASE_CONFIG
+   below is filled in. Otherwise falls back to the browser's localStorage, where
+   data stays on that one device/browser only.
+   Firestore layout: cards/{code} = card object, meta/{name} = {value}. */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBhQy-GgDlK_-5F5vgzlBr1ef1Hy_kMheA",
+  authDomain: "diner-amssa.firebaseapp.com",
+  projectId: "diner-amssa",
+  storageBucket: "diner-amssa.firebasestorage.app",
+  messagingSenderId: "1065622602845",
+  appId: "1:1065622602845:web:63306f1e6f91f7a8eff9b4"
+};
+const useFirebase = !!(window.firebase && FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.apiKey !== 'COLLER_ICI');
+/* fbReady stays pending while no staff member is signed in, so every database
+   call made before login simply waits for it. */
+let db = null, fbReady = Promise.resolve(), resolveFbReady = null;
+function lockDb(){ if(!resolveFbReady) fbReady = new Promise(r => resolveFbReady = r); }
+function unlockDb(){ if(resolveFbReady){ resolveFbReady(); resolveFbReady = null; } }
 
-async function storageGet(key){
-  if(hasCloudStorage){
-    try{ return await window.storage.get(key, true); }catch(e){ return null; }
+if(useFirebase){
+  firebase.initializeApp(FIREBASE_CONFIG);
+  db = firebase.firestore();
+  lockDb();
+  document.getElementById('app-main').style.display = 'none';
+  // Staff accounts are created by the organiser in the Firebase console
+  // (Authentication → Users); the app itself offers no sign-up.
+  firebase.auth().onAuthStateChanged(user=>{
+    document.getElementById('login-panel').style.display = user ? 'none' : 'block';
+    document.getElementById('app-main').style.display = user ? 'block' : 'none';
+    document.getElementById('user-bar').style.display = user ? 'flex' : 'none';
+    document.getElementById('user-email').textContent = user ? user.email : '';
+    if(user) unlockDb(); else { lockDb(); stopCardsListener(); }
+  });
+}
+document.getElementById('db-status').textContent = useFirebase
+  ? 'Base partagée (Firebase)'
+  : 'Base locale — données sur ce téléphone uniquement';
+
+function loginErrorMessage(e){
+  switch(e && e.code){
+    case 'auth/invalid-credential':
+    case 'auth/invalid-login-credentials':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found':
+    case 'auth/invalid-email': return 'Email ou mot de passe incorrect.';
+    case 'auth/user-disabled': return 'Ce compte a été désactivé.';
+    case 'auth/too-many-requests': return 'Trop de tentatives — patientez quelques minutes.';
+    case 'auth/network-request-failed': return 'Pas de connexion internet.';
+    default: return 'Connexion impossible — réessayez.';
   }
+}
+document.getElementById('btn-login').addEventListener('click', async ()=>{
+  const btn = document.getElementById('btn-login');
+  const err = document.getElementById('login-error');
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  if(!email || !password){ err.textContent = 'Saisissez votre email et votre mot de passe.'; return; }
+  err.textContent = '';
+  btn.disabled = true; btn.textContent = 'Connexion…';
+  try{
+    await firebase.auth().signInWithEmailAndPassword(email, password);
+    document.getElementById('login-password').value = '';
+  }catch(e){
+    err.textContent = loginErrorMessage(e);
+  }
+  btn.disabled = false; btn.textContent = 'Se connecter';
+});
+document.getElementById('login-password').addEventListener('keydown', (e)=>{
+  if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('btn-login').click(); }
+});
+document.getElementById('btn-logout').addEventListener('click', async ()=>{
+  if(!confirm('Se déconnecter de ce téléphone ?')) return;
+  stopCamera();
+  document.getElementById('result-zone').innerHTML = '';
+  await firebase.auth().signOut();
+});
+
+/* Reads always hit the server: a stale/empty offline cache must never make a
+   paid card look unpaid, or let the seed overwrite cards it didn't see. */
+const SERVER = {source:'server'};
+const BATCH_SIZE = 400; // Firestore allows max 500 writes per batch
+
+// Firestore doc ids can't contain '/' or be '.'/'..' (e.g. a scanned URL QR code)
+function isValidCode(code){
+  return !!code && !code.includes('/') && code !== '.' && code !== '..';
+}
+
+/* Business-rule refusals (already paid…) — their message is shown as-is */
+class CardRuleError extends Error{}
+function errorMessage(e){
+  return e instanceof CardRuleError ? e.message : 'Erreur de connexion à la base — réessayez';
+}
+
+function localGet(key){
   try{
     const raw = localStorage.getItem('gala:'+key);
-    return raw !== null ? {key, value: raw} : null;
+    return raw !== null ? JSON.parse(raw) : null;
   }catch(e){ return null; }
 }
-async function storageSet(key, value){
-  if(hasCloudStorage){
-    try{ return await window.storage.set(key, value, true); }catch(e){ return null; }
-  }
-  try{ localStorage.setItem('gala:'+key, value); return {key, value}; }catch(e){ return null; }
+function localSet(key, value){
+  try{ localStorage.setItem('gala:'+key, JSON.stringify(value)); }catch(e){}
 }
-async function storageDelete(key){
-  if(hasCloudStorage && typeof window.storage.delete === 'function'){
-    try{ return await window.storage.delete(key, true); }catch(e){ return null; }
-  }
-  try{ localStorage.removeItem('gala:'+key); return true; }catch(e){ return null; }
-}
-async function storageListKeys(prefix){
-  if(hasCloudStorage){
-    try{
-      const r = await window.storage.list(prefix, true);
-      return (r && r.keys) || [];
-    }catch(e){ return []; }
-  }
-  try{
-    const keys = [];
-    for(let i=0;i<localStorage.length;i++){
-      const k = localStorage.key(i);
-      if(k && k.startsWith('gala:'+prefix)) keys.push(k.slice('gala:'.length));
-    }
-    return keys;
-  }catch(e){ return []; }
+function localDelete(key){
+  try{ localStorage.removeItem('gala:'+key); }catch(e){}
 }
 
 /* ---------- Storage helpers ---------- */
+async function getMeta(name){
+  if(db){
+    await fbReady;
+    const s = await db.collection('meta').doc(name).get(SERVER);
+    return s.exists ? s.data().value : null;
+  }
+  return localGet('meta:'+name);
+}
+async function setMeta(name, value){
+  if(db){ await fbReady; return db.collection('meta').doc(name).set({value}); }
+  localSet('meta:'+name, value);
+}
+async function deleteMeta(name){
+  if(db){ await fbReady; return db.collection('meta').doc(name).delete(); }
+  localDelete('meta:'+name);
+}
 async function getCard(code){
-  const r = await storageGet('card:'+code);
-  try{ return r ? JSON.parse(r.value) : null; }catch(e){ return null; }
+  if(!isValidCode(code)) return null;
+  if(db){
+    await fbReady;
+    const s = await db.collection('cards').doc(code).get(SERVER);
+    return s.exists ? s.data() : null;
+  }
+  return localGet('card:'+code);
 }
 async function saveCard(card){
-  await storageSet('card:'+card.code, JSON.stringify(card));
+  if(db){ await fbReady; return db.collection('cards').doc(card.code).set(card); }
+  localSet('card:'+card.code, card);
 }
-async function deleteCard(code){
-  await storageDelete('card:'+code);
+async function saveCardsBulk(cards, onProgress){
+  if(db){
+    await fbReady;
+    for(let i=0;i<cards.length;i+=BATCH_SIZE){
+      const batch = db.batch();
+      cards.slice(i, i+BATCH_SIZE).forEach(c => batch.set(db.collection('cards').doc(c.code), c));
+      await batch.commit();
+      if(onProgress) onProgress(Math.min(i+BATCH_SIZE, cards.length), cards.length);
+    }
+    return;
+  }
+  cards.forEach(c => localSet('card:'+c.code, c));
+  if(onProgress) onProgress(cards.length, cards.length);
 }
-async function listAllCards(){
-  const keys = await storageListKeys('card:');
-  const cards = await Promise.all(keys.map(async k=>{
-    const r = await storageGet(k);
-    try{ return r ? JSON.parse(r.value) : null; }catch(e){ return null; }
-  }));
-  return cards.filter(Boolean).sort((a,b)=> b.created_at - a.created_at);
+async function deleteCardsBulk(codes, onProgress){
+  if(db){
+    await fbReady;
+    for(let i=0;i<codes.length;i+=BATCH_SIZE){
+      const batch = db.batch();
+      codes.slice(i, i+BATCH_SIZE).forEach(code => batch.delete(db.collection('cards').doc(code)));
+      await batch.commit();
+      if(onProgress) onProgress(Math.min(i+BATCH_SIZE, codes.length), codes.length);
+    }
+    return;
+  }
+  codes.forEach(code => localDelete('card:'+code));
+  if(onProgress) onProgress(codes.length, codes.length);
+}
+/* Live copy of the cards collection, kept up to date by a Firestore listener.
+   Opening Gestion/Statistiques then costs no extra reads (free plan: 50 000
+   reads/day; a full read of the base is ~1 000). Started only when those tabs
+   are first needed, so phones that only scan never download the whole base. */
+let cardsUnsub = null, liveCards = null, liveCardsPromise = null;
+function startCardsListener(){
+  let resolve, reject;
+  liveCardsPromise = new Promise((res, rej)=>{ resolve = res; reject = rej; });
+  liveCardsPromise.catch(()=>{});
+  cardsUnsub = db.collection('cards').onSnapshot({includeMetadataChanges:true}, snap=>{
+    if(snap.metadata.fromCache) return; // only trust server-confirmed data
+    liveCards = snap.docs.map(d => d.data());
+    resolve();
+    onCardsChanged();
+  }, err=>{
+    reject(err);
+    cardsUnsub = null; liveCards = null; // next call falls back to a direct read
+  });
+}
+function stopCardsListener(){
+  if(cardsUnsub) cardsUnsub();
+  cardsUnsub = null; liveCards = null;
+}
+function onCardsChanged(){
+  if(document.getElementById('panel-gestion').classList.contains('active')) refreshCardsList();
+  if(document.getElementById('panel-stats').classList.contains('active')) refreshStats();
+}
+
+/* fresh=true forces a full server read: used by seed/import/wipe, which must
+   see the exact current base before writing. */
+async function listAllCards(fresh){
+  let cards = [];
+  if(db){
+    await fbReady;
+    if(!fresh && !cardsUnsub) startCardsListener();
+    if(!fresh && cardsUnsub){
+      await liveCardsPromise;
+      cards = (liveCards || []).slice();
+    }else{
+      const snap = await db.collection('cards').get(SERVER);
+      cards = snap.docs.map(d => d.data());
+    }
+  }else{
+    try{
+      for(let i=0;i<localStorage.length;i++){
+        const k = localStorage.key(i);
+        if(k && k.startsWith('gala:card:')){
+          const c = localGet(k.slice('gala:'.length));
+          if(c) cards.push(c);
+        }
+      }
+    }catch(e){}
+  }
+  return cards.sort((a,b)=> b.created_at - a.created_at);
+}
+/* Atomic read-modify-write: with Firebase, two phones can't encaisser / enregistrer
+   l'entrée of the same card at the same moment. fn gets the current card and
+   returns the updated one (it may run several times, so it must not have side
+   effects), or throws a CardRuleError to refuse the change. */
+async function updateCard(code, fn){
+  if(db){
+    await fbReady;
+    const ref = db.collection('cards').doc(code);
+    return db.runTransaction(async tx=>{
+      const snap = await tx.get(ref);
+      if(!snap.exists) throw new CardRuleError('Carte introuvable');
+      const next = fn(snap.data());
+      tx.set(ref, next);
+      return next;
+    });
+  }
+  const current = localGet('card:'+code);
+  if(!current) throw new CardRuleError('Carte introuvable');
+  const next = fn(current);
+  localSet('card:'+code, next);
+  return next;
 }
 function genCode(){
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -540,58 +747,56 @@ async function genUniqueExtraCode(catKey){
   return code;
 }
 
-/* ---------- Import the printed QR codes (S-0001…S-0500, G-0001…G-0100) ---------- */
+/* ---------- Import the printed QR codes (S-0001…S-0700, G-0001…G-0200, VIP-0001…VIP-0100) ---------- */
 async function seedPrintedCards(onProgress){
-  const toCreate = [];
+  // listAllCards throws if the base is unreachable, so we never overwrite cards we couldn't see
+  const existing = new Set((await listAllCards(true)).map(c => c.code));
+  const all = [];
   Object.keys(CATEGORIES).forEach(key=>{
     const cat = CATEGORIES[key];
     for(let i=1;i<=cat.count;i++){
-      toCreate.push({ code: cat.prefix + String(i).padStart(4,'0'), category:key, montant:cat.montant });
+      all.push({
+        code: cat.prefix + String(i).padStart(4,'0'), category:key, montant:cat.montant,
+        paye:false, entree:false, paye_at:null, entree_at:null, nom:'', created_at: Date.now()
+      });
     }
   });
-  let created = 0, skipped = 0;
-  const chunkSize = 20;
-  for(let i=0;i<toCreate.length;i+=chunkSize){
-    const chunk = toCreate.slice(i, i+chunkSize);
-    await Promise.all(chunk.map(async item=>{
-      const existing = await getCard(item.code);
-      if(existing){ skipped++; return; }
-      const card = {
-        code:item.code, category:item.category, montant:item.montant,
-        paye:false, entree:false, paye_at:null, entree_at:null, nom:'', created_at: Date.now()
-      };
-      await saveCard(card);
-      created++;
-    }));
-    if(onProgress) onProgress(Math.min(i+chunkSize, toCreate.length), toCreate.length);
-  }
-  return {created, skipped, total: toCreate.length};
+  const toCreate = all.filter(c => !existing.has(c.code));
+  await saveCardsBulk(toCreate, onProgress);
+  return {created: toCreate.length, skipped: all.length - toCreate.length, total: all.length};
 }
 
 async function ensureSeeded(){
-  const flag = await storageGet('meta:seed_v1');
-  if(flag) return;
   const status = document.getElementById('seed-status');
-  if(status) status.textContent = 'Import initial des cartes imprimées en cours…';
-  const res = await seedPrintedCards((done,total)=>{
-    if(status) status.textContent = `Import en cours… ${done}/${total}`;
-  });
-  await storageSet('meta:seed_v1', '1');
-  if(status) status.textContent = `Import terminé : ${res.created} carte(s) ajoutée(s), ${res.skipped} déjà présente(s).`;
-  refreshCardsList();
+  try{
+    if(await getMeta('seed_v1')) return;
+    if(status) status.textContent = 'Import initial des cartes imprimées en cours…';
+    const res = await seedPrintedCards((done,total)=>{
+      if(status) status.textContent = `Import en cours… ${done}/${total}`;
+    });
+    await setMeta('seed_v1', 1);
+    if(status) status.textContent = `Import terminé : ${res.created} carte(s) ajoutée(s), ${res.skipped} déjà présente(s).`;
+    refreshCardsList();
+  }catch(e){
+    if(status) status.textContent = "Import initial impossible (connexion à la base) — réessayez avec le bouton ci-dessus.";
+  }
 }
 
 document.getElementById('btn-seed').addEventListener('click', async ()=>{
   const btn = document.getElementById('btn-seed');
   const status = document.getElementById('seed-status');
   btn.disabled = true; btn.textContent = 'Import en cours…';
-  const res = await seedPrintedCards((done,total)=>{
-    status.textContent = `Import en cours… ${done}/${total}`;
-  });
-  await storageSet('meta:seed_v1', '1');
-  status.textContent = `Import terminé : ${res.created} carte(s) ajoutée(s), ${res.skipped} déjà présente(s) sur ${res.total}.`;
+  try{
+    const res = await seedPrintedCards((done,total)=>{
+      status.textContent = `Import en cours… ${done}/${total}`;
+    });
+    await setMeta('seed_v1', 1);
+    status.textContent = `Import terminé : ${res.created} carte(s) ajoutée(s), ${res.skipped} déjà présente(s) sur ${res.total}.`;
+    showToast('Cartes imprimées importées');
+  }catch(e){
+    status.textContent = errorMessage(e);
+  }
   btn.disabled = false; btn.textContent = 'Importer / vérifier les cartes imprimées';
-  showToast('Cartes imprimées importées');
   refreshCardsList();
 });
 
@@ -601,7 +806,9 @@ document.getElementById('btn-wipe-db').addEventListener('click', async ()=>{
   const btn = document.getElementById('btn-wipe-db');
   const status = document.getElementById('wipe-status');
 
-  const existing = await listAllCards();
+  let existing;
+  try{ existing = await listAllCards(true); }
+  catch(e){ status.textContent = errorMessage(e); return; }
   if(existing.length === 0){
     status.textContent = "Aucune carte à supprimer.";
   }
@@ -612,53 +819,54 @@ document.getElementById('btn-wipe-db').addEventListener('click', async ()=>{
     + `dont ${paidCount} déjà payée(s) et ${enteredCount} déjà entrée(s). `
     + `Cette action est irréversible. Continuer ?`;
   if(!confirm(warn)) return;
-  if(!confirm("Dernière confirmation : toutes les cartes et leur historique de paiement/entrée seront effacés, puis seules S-0001 à S-0700, G-0001 à G-0200 et VIP-0001 à VIP-0100 seront recréées. Confirmer la suppression ?")) return;
+  // Typed confirmation: a mis-tap at the gate must never erase the evening's history
+  const typed = prompt("Dernière confirmation : toutes les cartes et leur historique de paiement/entrée seront effacés, puis seules S-0001 à S-0700, G-0001 à G-0200 et VIP-0001 à VIP-0100 seront recréées.\n\nPour confirmer, tapez VIDER en majuscules :");
+  if(typed === null) return;
+  if(typed.trim() !== 'VIDER'){ showToast('Suppression annulée'); return; }
 
   btn.disabled = true; btn.textContent = 'Suppression en cours…';
-  const chunkSize = 20;
-  for(let i=0;i<existing.length;i+=chunkSize){
-    const chunk = existing.slice(i, i+chunkSize);
-    await Promise.all(chunk.map(c => deleteCard(c.code)));
-    status.textContent = `Suppression… ${Math.min(i+chunkSize, existing.length)}/${existing.length}`;
+  try{
+    await deleteCardsBulk(existing.map(c => c.code), (done,total)=>{
+      status.textContent = `Suppression… ${done}/${total}`;
+    });
+    await deleteMeta('seed_v1');
+
+    btn.textContent = 'Réimport des plages actuelles…';
+    const res = await seedPrintedCards((done,total)=>{
+      status.textContent = `Réimport en cours… ${done}/${total}`;
+    });
+    await setMeta('seed_v1', 1);
+
+    status.textContent = `Base vidée (${existing.length} carte(s) supprimée(s)) et réimportée : ${res.created} carte(s) créée(s).`;
+    showToast('Base vidée et réimportée');
+  }catch(e){
+    status.textContent = "Opération interrompue : " + errorMessage(e) + " Relancez « Importer / vérifier les cartes imprimées ».";
   }
-  await storageDelete('meta:seed_v1');
-
-  btn.textContent = 'Réimport des plages actuelles…';
-  const res = await seedPrintedCards((done,total)=>{
-    status.textContent = `Réimport en cours… ${done}/${total}`;
-  });
-  await storageSet('meta:seed_v1', '1');
-
-  status.textContent = `Base vidée (${existing.length} carte(s) supprimée(s)) et réimportée : ${res.created} carte(s) créée(s).`;
   btn.disabled = false; btn.textContent = 'Vider la base et réimporter les plages actuelles';
-  showToast('Base vidée et réimportée');
   refreshCardsList();
   refreshStats();
 });
 
 /* ---------- Import cards from an Excel file (Code / Catégorie / Montant columns) ---------- */
 async function importRows(rows, onProgress){
-  let created = 0, skipped = 0, invalid = 0;
-  const chunkSize = 20;
-  for(let i=0;i<rows.length;i+=chunkSize){
-    const chunk = rows.slice(i, i+chunkSize);
-    await Promise.all(chunk.map(async row=>{
-      const code = String(row['Code'] ?? row['code'] ?? '').trim();
-      if(!code){ invalid++; return; }
-      let cat = String(row['Catégorie'] ?? row['Categorie'] ?? row['categorie'] ?? '').trim().toUpperCase();
-      if(!CATEGORIES[cat]) cat = categoryOf(code) || '';
-      if(!CATEGORIES[cat]){ invalid++; return; }
-      const montantRaw = row['Montant'] ?? row['montant'] ?? '';
-      const parsedMontant = parseInt(String(montantRaw).replace(/[^0-9]/g,''), 10);
-      const montant = Number.isFinite(parsedMontant) && parsedMontant > 0 ? parsedMontant : CATEGORIES[cat].montant;
-      const existing = await getCard(code);
-      if(existing){ skipped++; return; }
-      await saveCard({ code, category:cat, montant, paye:false, entree:false, paye_at:null, entree_at:null, nom:'', created_at: Date.now() });
-      created++;
-    }));
-    if(onProgress) onProgress(Math.min(i+chunkSize, rows.length), rows.length);
-  }
-  return { created, skipped, invalid, total: rows.length };
+  const existing = new Set((await listAllCards(true)).map(c => c.code));
+  const toCreate = [];
+  let skipped = 0, invalid = 0;
+  rows.forEach(row=>{
+    const code = String(row['Code'] ?? row['code'] ?? '').trim();
+    if(!isValidCode(code)){ invalid++; return; }
+    let cat = String(row['Catégorie'] ?? row['Categorie'] ?? row['categorie'] ?? '').trim().toUpperCase();
+    if(!CATEGORIES[cat]) cat = categoryOf(code) || '';
+    if(!CATEGORIES[cat]){ invalid++; return; }
+    const montantRaw = row['Montant'] ?? row['montant'] ?? '';
+    const parsedMontant = parseInt(String(montantRaw).replace(/[^0-9]/g,''), 10);
+    const montant = Number.isFinite(parsedMontant) && parsedMontant > 0 ? parsedMontant : CATEGORIES[cat].montant;
+    if(existing.has(code)){ skipped++; return; }
+    existing.add(code);
+    toCreate.push({ code, category:cat, montant, paye:false, entree:false, paye_at:null, entree_at:null, nom:'', created_at: Date.now() });
+  });
+  await saveCardsBulk(toCreate, onProgress);
+  return { created: toCreate.length, skipped, invalid, total: rows.length };
 }
 
 document.getElementById('excel-input').addEventListener('change', async (e)=>{
@@ -874,9 +1082,19 @@ document.getElementById('manual-code').addEventListener('keydown', (e)=>{
 async function handleScan(rawCode){
   const code = rawCode.toUpperCase();
   const zone = document.getElementById('result-zone');
+  if(!isValidCode(code)){
+    zone.innerHTML = '';
+    showToast('QR code non reconnu');
+    return;
+  }
   zone.innerHTML = '<div class="muted" style="text-align:center;padding:20px;">Vérification…</div>';
   scrollToResult();
-  const card = await getCard(code);
+  let card;
+  try{ card = await getCard(code); }
+  catch(e){
+    zone.innerHTML = `<div class="card" style="border-color:var(--red);text-align:center;">${errorMessage(e)}</div>`;
+    return;
+  }
   if(!card){
     renderUnknown(code);
   }else{
@@ -890,7 +1108,7 @@ function renderUnknown(code){
   zone.innerHTML = `
     <div class="card" style="border-color:var(--red);">
       <div class="badge badge-unpaid" style="margin-bottom:10px;">Carte introuvable</div>
-      <div class="li-code" style="font-size:15px;margin-bottom:4px;">${code}</div>
+      <div class="li-code" style="font-size:15px;margin-bottom:4px;">${escapeHtml(code)}</div>
       <div class="muted" style="margin-bottom:14px;">Ce code n'existe pas dans le système.${detected ? ' Catégorie détectée automatiquement d\u2019après le code.' : ''} Vous pouvez l'enregistrer comme nouvelle carte.</div>
       <label class="field-label">Catégorie</label>
       <div class="tier-choice" id="unknown-tier-choice">
@@ -910,7 +1128,8 @@ function renderUnknown(code){
   zone.querySelector('#btn-register-unknown').addEventListener('click', async ()=>{
     const montant = CATEGORIES[cat].montant;
     const card = {code, category:cat, montant, paye:false, entree:false, paye_at:null, entree_at:null, nom:'', created_at: Date.now()};
-    await saveCard(card);
+    try{ await saveCard(card); }
+    catch(e){ showToast(errorMessage(e)); return; }
     showToast('Carte créée');
     renderCard(card);
   });
@@ -964,40 +1183,42 @@ function renderCard(card){
   zone.innerHTML = html;
 
   const bEnc = zone.querySelector('#btn-encaisser');
-  if(bEnc) bEnc.addEventListener('click', async ()=>{
-    card.paye = true;
-    card.paye_at = Date.now();
-    await saveCard(card);
-    showToast('Carte encaissée — '+fmt(card.montant));
-    renderCard(card);
-  });
+  if(bEnc) bEnc.addEventListener('click', ()=> applyAndRender(bEnc, card.code, c=>{
+    if(c.paye) throw new CardRuleError('Carte déjà encaissée (par un autre poste ?)');
+    return {...c, paye:true, paye_at:Date.now()};
+  }, 'Carte encaissée — '+fmt(card.montant)));
   const bEnt = zone.querySelector('#btn-entree');
-  if(bEnt) bEnt.addEventListener('click', async ()=>{
-    card.entree = true;
-    card.entree_at = Date.now();
-    await saveCard(card);
-    showToast('Entrée enregistrée');
-    renderCard(card);
-  });
+  if(bEnt) bEnt.addEventListener('click', ()=> applyAndRender(bEnt, card.code, c=>{
+    if(!c.paye) throw new CardRuleError('Carte non payée');
+    if(c.entree) throw new CardRuleError('Entrée déjà enregistrée à '+timeFmt(c.entree_at));
+    return {...c, entree:true, entree_at:Date.now()};
+  }, 'Entrée enregistrée'));
   const bCancelEnt = zone.querySelector('#btn-cancel-entree');
-  if(bCancelEnt) bCancelEnt.addEventListener('click', async ()=>{
+  if(bCancelEnt) bCancelEnt.addEventListener('click', ()=>{
     if(!confirm("Annuler l'entrée enregistrée pour cette carte ?")) return;
-    card.entree = false;
-    card.entree_at = null;
-    await saveCard(card);
-    showToast('Entrée annulée');
-    renderCard(card);
+    applyAndRender(bCancelEnt, card.code, c=>({...c, entree:false, entree_at:null}), 'Entrée annulée');
   });
   const bCancelPaye = zone.querySelector('#btn-cancel-paye');
-  if(bCancelPaye) bCancelPaye.addEventListener('click', async ()=>{
+  if(bCancelPaye) bCancelPaye.addEventListener('click', ()=>{
     if(card.entree && !confirm("Cette carte a déjà servi à entrer. Annuler quand même le paiement ?")) return;
     if(!card.entree && !confirm('Annuler le paiement de cette carte ?')) return;
-    card.paye = false;
-    card.paye_at = null;
-    await saveCard(card);
-    showToast('Paiement annulé');
-    renderCard(card);
+    applyAndRender(bCancelPaye, card.code, c=>({...c, paye:false, paye_at:null}), 'Paiement annulé');
   });
+}
+
+/* Runs an atomic card update from a ticket button, then redraws the ticket with
+   the latest data (also on refusal, so the staff sees what another phone did). */
+async function applyAndRender(btn, code, fn, okMsg){
+  btn.disabled = true;
+  try{
+    const next = await updateCard(code, fn);
+    showToast(okMsg);
+    renderCard(next);
+  }catch(e){
+    showToast(errorMessage(e));
+    const fresh = await getCard(code).catch(()=>null);
+    if(fresh) renderCard(fresh); else btn.disabled = false;
+  }
 }
 
 function escapeHtml(s){
@@ -1019,14 +1240,20 @@ document.querySelectorAll('#panel-gestion .tier-choice .tier-opt').forEach(opt=>
 document.getElementById('btn-create-card').addEventListener('click', async ()=>{
   const btn = document.getElementById('btn-create-card');
   btn.disabled = true; btn.textContent = 'Création…';
-  const code = await genUniqueExtraCode(selectedCategory);
   const paid = document.getElementById('new-card-paid').checked;
   const nom = document.getElementById('new-card-name').value.trim();
-  const card = {
-    code, category: selectedCategory, montant: CATEGORIES[selectedCategory].montant, paye: paid, entree:false,
-    paye_at: paid ? Date.now() : null, entree_at: null, nom, created_at: Date.now()
-  };
-  await saveCard(card);
+  let code;
+  try{
+    code = await genUniqueExtraCode(selectedCategory);
+    await saveCard({
+      code, category: selectedCategory, montant: CATEGORIES[selectedCategory].montant, paye: paid, entree:false,
+      paye_at: paid ? Date.now() : null, entree_at: null, nom, created_at: Date.now()
+    });
+  }catch(e){
+    showToast(errorMessage(e));
+    btn.disabled = false; btn.textContent = 'Générer la carte';
+    return;
+  }
 
   const resBox = document.getElementById('new-card-result');
   const qrTarget = document.getElementById('qr-target');
@@ -1058,8 +1285,13 @@ let allCardsCache = [];
 async function refreshCardsList(){
   const el = document.getElementById('cards-list');
   el.innerHTML = '<div class="muted">Chargement…</div>';
-  allCardsCache = await listAllCards();
-  renderCardsList(allCardsCache);
+  try{ allCardsCache = await listAllCards(); }
+  catch(e){
+    el.innerHTML = `<div class="muted">${errorMessage(e)}</div>`;
+    document.getElementById('paid-cards-list').innerHTML = `<div class="muted">${errorMessage(e)}</div>`;
+    return;
+  }
+  applySearch();
   renderPaidCardsList(allCardsCache);
 }
 function renderPaidCardsList(cards){
@@ -1089,10 +1321,10 @@ function renderPaidCardsList(cards){
       if(!card) return;
       if(card.entree && !confirm("Cette carte a déjà servi à entrer. Annuler quand même le paiement ?")) return;
       if(!card.entree && !confirm('Annuler le paiement de la carte ' + code + ' ?')) return;
-      card.paye = false;
-      card.paye_at = null;
-      await saveCard(card);
-      showToast('Paiement annulé — ' + code);
+      try{
+        await updateCard(code, c=>({...c, paye:false, paye_at:null}));
+        showToast('Paiement annulé — ' + code);
+      }catch(e){ showToast(errorMessage(e)); }
       await refreshCardsList();
       if(typeof refreshStats === 'function') refreshStats();
     });
@@ -1119,17 +1351,21 @@ function renderCardsList(cards){
     </div>`;
   }).join('');
 }
-document.getElementById('search-input').addEventListener('input', (e)=>{
-  const q = e.target.value.trim().toLowerCase();
+// Also re-run on refresh, so live updates keep the current search filter
+function applySearch(){
+  const q = document.getElementById('search-input').value.trim().toLowerCase();
   if(!q){ renderCardsList(allCardsCache); return; }
   renderCardsList(allCardsCache.filter(c =>
     c.code.toLowerCase().includes(q) || (c.nom||'').toLowerCase().includes(q)
   ));
-});
+}
+document.getElementById('search-input').addEventListener('input', applySearch);
 
 /* ---------- Stats ---------- */
 async function refreshStats(){
-  const cards = await listAllCards();
+  let cards;
+  try{ cards = await listAllCards(); }
+  catch(e){ document.getElementById('stats-detail').textContent = errorMessage(e); return; }
   const total = cards.length;
   const paid = cards.filter(c=>c.paye);
   const entered = cards.filter(c=>c.entree);
@@ -1170,11 +1406,44 @@ document.getElementById('btn-print-stats').addEventListener('click', async ()=>{
   document.body.classList.add('printing');
   setTimeout(()=>{ window.print(); }, 50);
 });
+/* ---------- Backup: export every card to Excel (offline fallback list) ---------- */
+document.getElementById('btn-export-excel').addEventListener('click', async ()=>{
+  const btn = document.getElementById('btn-export-excel');
+  btn.disabled = true; btn.textContent = 'Export en cours…';
+  try{
+    const cards = await listAllCards(true);
+    cards.sort((a,b)=> a.code.localeCompare(b.code, 'fr', {numeric:true}));
+    const rows = cards.map(c=>{
+      const cat = c.category || categoryOf(c.code);
+      return {
+        'Code': c.code,
+        'Catégorie': CATEGORIES[cat] ? CATEGORIES[cat].label : '',
+        'Montant': c.montant,
+        'Nom': c.nom || '',
+        'Payée': c.paye ? 'OUI' : 'non',
+        'Payée le': c.paye ? timeFmt(c.paye_at) : '',
+        'Entrée': c.entree ? 'OUI' : 'non',
+        'Entrée le': c.entree ? timeFmt(c.entree_at) : ''
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{wch:12},{wch:20},{wch:10},{wch:24},{wch:7},{wch:14},{wch:7},{wch:14}];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Cartes');
+    const d = new Date(), p = n => String(n).padStart(2,'0');
+    XLSX.writeFile(wb, `cartes-diner-${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}-${p(d.getHours())}h${p(d.getMinutes())}.xlsx`);
+    showToast(cards.length + ' cartes exportées');
+  }catch(e){
+    showToast(errorMessage(e));
+  }
+  btn.disabled = false; btn.textContent = 'Exporter en Excel';
+});
+
 window.addEventListener('afterprint', ()=>{
   document.body.classList.remove('printing');
 });
 
-refreshCardsList();
+if(!db) refreshCardsList(); // with Firebase, the Gestion tab loads it on demand
 ensureSeeded();
 </script>
 </body>
