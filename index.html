@@ -323,7 +323,10 @@
           <input type="file" accept="image/*" id="file-input" style="display:none;">
         </label>
       </div>
-      <button class="btn btn-ghost" id="btn-switch-camera" style="display:none;margin-top:10px;">Changer de caméra</button>
+      <div class="row" id="camera-controls" style="display:none;margin-top:10px;">
+        <button class="btn btn-ghost" id="btn-torch" style="display:none;">🔦 Allumer la torche</button>
+        <button class="btn btn-ghost" id="btn-switch-camera">Changer de caméra</button>
+      </div>
 
       <div class="divider-label">ou saisir le code manuellement</div>
       <div class="row">
@@ -933,9 +936,10 @@ async function startCamera(){
 
   try{
     try{
-      // 'ideal' (not 'exact') avoids OverconstrainedError on some iPhones/Android devices
+      // 'ideal' (not 'exact') avoids OverconstrainedError on some iPhones/Android devices.
+      // 1280x720 is sharp enough for printed QR codes while staying fast to analyse.
       stream = await navigator.mediaDevices.getUserMedia({
-        video:{ facingMode:{ ideal: currentFacing } }, audio:false
+        video:{ facingMode:{ ideal: currentFacing }, width:{ ideal:1280 }, height:{ ideal:720 } }, audio:false
       });
     }catch(e1){
       // Fallback: any available camera
@@ -949,10 +953,11 @@ async function startCamera(){
     box.appendChild(frame);
     video.srcObject = stream;
     await video.play();
+    setupTrackFeatures();
     document.getElementById('btn-camera').textContent = 'Désactiver la caméra';
     document.getElementById('scan-hint').style.display = 'block';
     document.getElementById('scan-hint').textContent = 'Visez le QR code de la carte';
-    document.getElementById('btn-switch-camera').style.display = 'block';
+    document.getElementById('camera-controls').style.display = 'flex';
     scanLoop();
   }catch(e){
     box.innerHTML = "<div class=\"muted\" style=\"padding:0 16px;text-align:center;\">Caméra indisponible sur cet appareil ou permission refusée.<br>iPhone : Réglages → Safari → Caméra doit être autorisé.<br>Android : autorisez la caméra dans les paramètres du navigateur.<br>Vous pouvez sinon utiliser l'import d'image ou la saisie manuelle.</div>";
@@ -966,8 +971,42 @@ function stopCamera(){
   box.innerHTML = '<div class="muted" id="video-placeholder">Caméra désactivée</div>';
   document.getElementById('btn-camera').textContent = 'Activer la caméra';
   document.getElementById('scan-hint').style.display = 'none';
-  document.getElementById('btn-switch-camera').style.display = 'none';
+  document.getElementById('camera-controls').style.display = 'none';
+  document.getElementById('btn-torch').style.display = 'none';
+  torchOn = false;
+  updateTorchButton();
 }
+
+/* ---------- Continuous autofocus + torch (when the phone supports them) ---------- */
+let torchOn = false;
+function currentTrack(){
+  return stream ? stream.getVideoTracks()[0] : null;
+}
+function setupTrackFeatures(){
+  const track = currentTrack();
+  if(!track || !track.getCapabilities) return;
+  let caps = {};
+  try{ caps = track.getCapabilities() || {}; }catch(e){ return; }
+  // Keeps refocusing as the card moves closer/farther — the main cause of slow scans
+  if(Array.isArray(caps.focusMode) && caps.focusMode.includes('continuous')){
+    track.applyConstraints({advanced:[{focusMode:'continuous'}]}).catch(()=>{});
+  }
+  document.getElementById('btn-torch').style.display = caps.torch ? 'flex' : 'none';
+}
+function updateTorchButton(){
+  document.getElementById('btn-torch').textContent = torchOn ? '🔦 Éteindre la torche' : '🔦 Allumer la torche';
+}
+document.getElementById('btn-torch').addEventListener('click', async ()=>{
+  const track = currentTrack();
+  if(!track) return;
+  try{
+    await track.applyConstraints({advanced:[{torch: !torchOn}]});
+    torchOn = !torchOn;
+    updateTorchButton();
+  }catch(e){
+    showToast('Torche indisponible sur ce téléphone');
+  }
+});
 document.getElementById('btn-camera').addEventListener('click', ()=>{
   unlockAudio();
   if(stream) stopCamera(); else startCamera();
@@ -1020,28 +1059,70 @@ function scrollToResult(){
     if(el) el.scrollIntoView({behavior:'smooth', block:'start'});
   }, 60);
 }
+/* ---------- QR detection ----------
+   1) The phone's built-in BarcodeDetector (Chrome/Android): hardware-fast.
+   2) Otherwise jsQR (iPhone…), cycling through 4 passes:
+      - 2 of 4: the area around the on-screen frame downscaled to 480px
+        (~5x faster than the full HD image, so many more tries per second);
+      - 1 of 4: the same area at full detail, for small or slightly blurry codes;
+      - 1 of 4: the whole image, in case the QR is outside the frame. */
+let barcodeDetector = null;
+(async ()=>{
+  try{
+    if('BarcodeDetector' in window){
+      const formats = await BarcodeDetector.getSupportedFormats();
+      if(formats.includes('qr_code')) barcodeDetector = new BarcodeDetector({formats:['qr_code']});
+    }
+  }catch(e){ /* not supported: jsQR fallback */ }
+})();
+
+let scanBusy = false, scanTry = 0, lastCode = '', lastCodeTime = 0;
+async function detectInVideo(){
+  if(barcodeDetector){
+    try{
+      const found = await barcodeDetector.detect(video);
+      return found.length ? found[0].rawValue : null;
+    }catch(e){ barcodeDetector = null; } // broken on this device: use jsQR from now on
+  }
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const pass = (++scanTry) % 4;
+  const full = pass === 0;
+  // The preview is a centred square (object-fit:cover); keep 90% of it around the frame
+  const side = Math.min(vw, vh) * 0.9;
+  const sx = full ? 0 : (vw - side) / 2, sy = full ? 0 : (vh - side) / 2;
+  const sw = full ? vw : side, sh = full ? vh : side;
+  const maxDim = full ? 720 : (pass === 2 ? 800 : 480);
+  const scale = Math.min(1, maxDim / Math.max(sw, sh));
+  const w = Math.round(sw * scale), h = Math.round(sh * scale);
+  canvas.width = w; canvas.height = h;
+  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
+  const img = ctx.getImageData(0, 0, w, h);
+  // Printed cards are dark-on-light: skipping the inverted pass halves the work
+  const res = jsQR(img.data, w, h, {inversionAttempts:'dontInvert'});
+  return res && res.data ? res.data : null;
+}
+function onDetected(data){
+  if(!data || !stream) return;
+  const code = data.trim();
+  const now = Date.now();
+  // Same card still held in front of the camera: don't re-trigger it
+  if(code === lastCode && now - lastCodeTime < 4000){ lastCodeTime = now; return; }
+  if(now - lastScanTime < 800) return;
+  lastCode = code; lastCodeTime = now; lastScanTime = now;
+  navigator.vibrate && navigator.vibrate(80);
+  flashScanFrame();
+  playBeep();
+  handleScan(code);
+}
 function scanLoop(){
   if(!stream) return;
-  try{
-    if(video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth > 0 && video.videoHeight > 0){
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const img = ctx.getImageData(0,0,canvas.width,canvas.height);
-      const code = jsQR(img.data, img.width, img.height);
-      if(code && code.data && Date.now() - lastScanTime > 1500){
-        lastScanTime = Date.now();
-        navigator.vibrate && navigator.vibrate(80);
-        flashScanFrame();
-        playBeep();
-        handleScan(code.data.trim());
-      }
-    }
-  }catch(err){
+  if(!scanBusy && video.readyState >= video.HAVE_ENOUGH_DATA && video.videoWidth > 0 && video.videoHeight > 0){
+    scanBusy = true;
     // A single bad frame (e.g. Safari throwing on a 0x0 read right as the
     // camera warms up) must never kill the whole camera session.
+    detectInVideo().then(onDetected).catch(()=>{}).finally(()=>{ scanBusy = false; });
   }
-  if(stream) rafId = requestAnimationFrame(scanLoop);
+  rafId = requestAnimationFrame(scanLoop);
 }
 
 /* ---------- Scanner: image upload ---------- */
@@ -1052,14 +1133,23 @@ document.getElementById('file-input').addEventListener('change', (e)=>{
   const reader = new FileReader();
   reader.onload = (ev)=>{
     const img = new Image();
-    img.onload = ()=>{
-      canvas.width = img.width; canvas.height = img.height;
-      ctx.drawImage(img,0,0);
-      const data = ctx.getImageData(0,0,canvas.width,canvas.height);
-      const result = jsQR(data.data, data.width, data.height);
-      if(result && result.data){
+    img.onload = async ()=>{
+      let found = null;
+      if(barcodeDetector){
+        try{ const r = await barcodeDetector.detect(img); if(r.length) found = r[0].rawValue; }catch(e){}
+      }
+      if(!found){
+        // Big phone photos (12 MP+) are slow and often fail in jsQR: downscale first
+        const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+        canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const data = ctx.getImageData(0,0,canvas.width,canvas.height);
+        const result = jsQR(data.data, data.width, data.height);
+        if(result && result.data) found = result.data;
+      }
+      if(found){
         playBeep();
-        handleScan(result.data.trim());
+        handleScan(found.trim());
       }else{
         showToast('Aucun QR code détecté dans cette image');
       }
