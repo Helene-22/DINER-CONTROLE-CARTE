@@ -12,23 +12,23 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
-    --bg-deep:#241531;
-    --bg-panel:#2F1D40;
-    --bg-panel-2:#3B2551;
-    --line:#5A3E73;
+    --bg-deep:#3A0D16;
+    --bg-panel:#4A121C;
+    --bg-panel-2:#5C1822;
+    --line:#7A2E35;
     --gold:#D4AF37;
     --gold-soft:#E8CB74;
-    --platinum:#E7DFF2;
-    --cream:#FBF8FF;
-    --cream-dim:#C9B8DC;
+    --platinum:#F3E6D8;
+    --cream:#FBF5EC;
+    --cream-dim:#D9BFAF;
     --green:#4FAE7E;
     --green-dim:#173B2C;
     --amber:#E0A93A;
     --amber-dim:#3E2E10;
-    --red:#DD6B5C;
-    --red-dim:#3E1F1A;
-    --vip:#E07FAE;
-    --violet:#9B6BC9;
+    --red:#F0776A;
+    --red-dim:#4A1A16;
+    --vip:#E0A3D4;
+    --violet:#C97F9B;
     --radius:14px;
   }
   *{box-sizing:border-box;}
@@ -36,10 +36,10 @@
   body{
     background: var(--bg-deep);
     background-image:
-      radial-gradient(circle at 12% 0%, rgba(212,175,55,0.12), transparent 42%),
-      radial-gradient(circle at 92% 8%, rgba(155,107,201,0.20), transparent 40%),
-      radial-gradient(circle at 15% 85%, rgba(224,127,174,0.10), transparent 45%),
-      radial-gradient(circle at 90% 100%, rgba(212,175,55,0.08), transparent 40%);
+      radial-gradient(circle at 12% 0%, rgba(212,175,55,0.16), transparent 42%),
+      radial-gradient(circle at 92% 8%, rgba(212,175,55,0.10), transparent 40%),
+      radial-gradient(circle at 15% 85%, rgba(0,0,0,0.25), transparent 45%),
+      radial-gradient(circle at 90% 100%, rgba(212,175,55,0.10), transparent 40%);
     color: var(--cream);
     font-family: 'Manrope', sans-serif;
     min-height: 100vh;
@@ -151,7 +151,7 @@
     position:relative;border-radius:16px;padding:22px 20px 20px;margin-top:16px;
     background:var(--bg-panel);border:1px solid var(--line);overflow:hidden;
   }
-  .ticket.tier-5000{border-color:#8C7AA6;}
+  .ticket.tier-5000{border-color:var(--gold-soft);}
   .ticket.tier-10000{border-color:var(--gold);}
   .ticket.tier-vip{border-color:var(--vip);}
   .ticket::before{
@@ -314,9 +314,13 @@
   <section class="panel" id="panel-gestion">
     <div class="card">
       <h3>Cartes imprimées</h3>
-      <div class="muted">Enregistre dans l'application les codes QR déjà imprimés sur les cartes (S-0001 à S-0500, G-0001 à G-0100, VIP-0001 à VIP-0400), pour qu'ils soient reconnus dès le premier scan.</div>
+      <div class="muted">Enregistre dans l'application les codes QR déjà imprimés sur les cartes (S-0001 à S-0700, G-0001 à G-0200, VIP-0001 à VIP-0100), pour qu'ils soient reconnus dès le premier scan.</div>
       <button class="btn btn-outline" id="btn-seed" style="margin-top:14px;">Importer / vérifier les cartes imprimées</button>
       <div id="seed-status"></div>
+      <div class="divider-label">Zone sensible</div>
+      <div class="muted">Efface TOUTES les cartes actuellement enregistrées (y compris celles déjà payées/entrées et les cartes créées manuellement), puis réimporte uniquement S-0001 à S-0700, G-0001 à G-0200, VIP-0001 à VIP-0100. Action irréversible.</div>
+      <button class="btn btn-danger" id="btn-wipe-db" style="margin-top:14px;">Vider la base et réimporter les plages actuelles</button>
+      <div id="wipe-status"></div>
     </div>
 
     <div class="card">
@@ -363,6 +367,12 @@
     </div>
 
     <div class="card">
+      <h3>Cartes payées</h3>
+      <div class="muted">Cartes déjà encaissées. Vous pouvez annuler un paiement par erreur directement ici.</div>
+      <div id="paid-cards-list" style="margin-top:10px;"><div class="muted">Chargement…</div></div>
+    </div>
+
+    <div class="card">
       <h3>Toutes les cartes</h3>
       <input type="text" class="search-box" id="search-input" placeholder="Rechercher par code ou nom…">
       <div id="cards-list"><div class="muted">Chargement…</div></div>
@@ -406,9 +416,9 @@ const timeFmt = ts => ts ? new Date(ts).toLocaleString('fr-FR', {day:'2-digit',m
 
 /* ---------- Card categories (matches the printed QR batches) ---------- */
 const CATEGORIES = {
-  S:   { label:'Cartes Solidarité', montant:5000,  count:500, prefix:'S-' },
-  VIP: { label:'Cartes VIP',        montant:10000, count:400, prefix:'VIP-' },
-  G:   { label:'Cartes Gala Vol.4', montant:20000, count:100, prefix:'G-' }
+  S:   { label:'Cartes Solidarité', montant:5000,  count:700, prefix:'S-' },
+  VIP: { label:'Cartes VIP',        montant:10000, count:100, prefix:'VIP-' },
+  G:   { label:'Cartes Gala Vol.4', montant:20000, count:200, prefix:'G-' }
 };
 function categoryOf(code){
   if(!code) return null;
@@ -462,6 +472,12 @@ async function storageSet(key, value){
   }
   try{ localStorage.setItem('gala:'+key, value); return {key, value}; }catch(e){ return null; }
 }
+async function storageDelete(key){
+  if(hasCloudStorage && typeof window.storage.delete === 'function'){
+    try{ return await window.storage.delete(key, true); }catch(e){ return null; }
+  }
+  try{ localStorage.removeItem('gala:'+key); return true; }catch(e){ return null; }
+}
 async function storageListKeys(prefix){
   if(hasCloudStorage){
     try{
@@ -486,6 +502,9 @@ async function getCard(code){
 }
 async function saveCard(card){
   await storageSet('card:'+card.code, JSON.stringify(card));
+}
+async function deleteCard(code){
+  await storageDelete('card:'+code);
 }
 async function listAllCards(){
   const keys = await storageListKeys('card:');
@@ -574,6 +593,47 @@ document.getElementById('btn-seed').addEventListener('click', async ()=>{
   btn.disabled = false; btn.textContent = 'Importer / vérifier les cartes imprimées';
   showToast('Cartes imprimées importées');
   refreshCardsList();
+});
+
+/* ---------- Danger zone: wipe the whole card database, then reseed only the
+   current printed ranges (S-0001…S-0700, G-0001…G-0200, VIP-0001…VIP-0100) ---------- */
+document.getElementById('btn-wipe-db').addEventListener('click', async ()=>{
+  const btn = document.getElementById('btn-wipe-db');
+  const status = document.getElementById('wipe-status');
+
+  const existing = await listAllCards();
+  if(existing.length === 0){
+    status.textContent = "Aucune carte à supprimer.";
+  }
+  const paidCount = existing.filter(c=>c.paye).length;
+  const enteredCount = existing.filter(c=>c.entree).length;
+
+  const warn = `Vous êtes sur le point de SUPPRIMER DÉFINITIVEMENT ${existing.length} carte(s), `
+    + `dont ${paidCount} déjà payée(s) et ${enteredCount} déjà entrée(s). `
+    + `Cette action est irréversible. Continuer ?`;
+  if(!confirm(warn)) return;
+  if(!confirm("Dernière confirmation : toutes les cartes et leur historique de paiement/entrée seront effacés, puis seules S-0001 à S-0700, G-0001 à G-0200 et VIP-0001 à VIP-0100 seront recréées. Confirmer la suppression ?")) return;
+
+  btn.disabled = true; btn.textContent = 'Suppression en cours…';
+  const chunkSize = 20;
+  for(let i=0;i<existing.length;i+=chunkSize){
+    const chunk = existing.slice(i, i+chunkSize);
+    await Promise.all(chunk.map(c => deleteCard(c.code)));
+    status.textContent = `Suppression… ${Math.min(i+chunkSize, existing.length)}/${existing.length}`;
+  }
+  await storageDelete('meta:seed_v1');
+
+  btn.textContent = 'Réimport des plages actuelles…';
+  const res = await seedPrintedCards((done,total)=>{
+    status.textContent = `Réimport en cours… ${done}/${total}`;
+  });
+  await storageSet('meta:seed_v1', '1');
+
+  status.textContent = `Base vidée (${existing.length} carte(s) supprimée(s)) et réimportée : ${res.created} carte(s) créée(s).`;
+  btn.disabled = false; btn.textContent = 'Vider la base et réimporter les plages actuelles';
+  showToast('Base vidée et réimportée');
+  refreshCardsList();
+  refreshStats();
 });
 
 /* ---------- Import cards from an Excel file (Code / Catégorie / Montant columns) ---------- */
@@ -1000,6 +1060,43 @@ async function refreshCardsList(){
   el.innerHTML = '<div class="muted">Chargement…</div>';
   allCardsCache = await listAllCards();
   renderCardsList(allCardsCache);
+  renderPaidCardsList(allCardsCache);
+}
+function renderPaidCardsList(cards){
+  const el = document.getElementById('paid-cards-list');
+  if(!el) return;
+  const paid = cards.filter(c => c.paye);
+  if(paid.length === 0){
+    el.innerHTML = '<div class="empty-state"><i>—</i>Aucune carte payée pour le moment.</div>';
+    return;
+  }
+  el.innerHTML = paid.map(c => {
+    const cat = c.category || categoryOf(c.code);
+    const catLabel = cat === 'G' ? 'Gala Vol.4' : (cat === 'VIP' ? 'VIP' : (cat === 'S' ? 'Solidarité' : ''));
+    return `
+    <div class="list-item">
+      <div class="li-left">
+        <div class="li-code">${c.code}${c.nom ? ' · '+escapeHtml(c.nom) : ''}</div>
+        <div class="li-meta">${catLabel ? catLabel+' · ' : ''}${fmt(c.montant)} · encaissée ${timeFmt(c.paye_at)}${c.entree ? ' · entrée '+timeFmt(c.entree_at) : ''}</div>
+      </div>
+      <button class="btn btn-danger btn-sm" style="width:auto;flex:0 0 auto;" data-cancel-paid="${escapeHtml(c.code)}">Annuler le paiement</button>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('[data-cancel-paid]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const code = btn.dataset.cancelPaid;
+      const card = allCardsCache.find(c => c.code === code);
+      if(!card) return;
+      if(card.entree && !confirm("Cette carte a déjà servi à entrer. Annuler quand même le paiement ?")) return;
+      if(!card.entree && !confirm('Annuler le paiement de la carte ' + code + ' ?')) return;
+      card.paye = false;
+      card.paye_at = null;
+      await saveCard(card);
+      showToast('Paiement annulé — ' + code);
+      await refreshCardsList();
+      if(typeof refreshStats === 'function') refreshStats();
+    });
+  });
 }
 function renderCardsList(cards){
   const el = document.getElementById('cards-list');
