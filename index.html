@@ -9,7 +9,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- SheetJS fork that can also write cell colours (same XLSX API, used for import and export) -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -1413,23 +1414,42 @@ document.getElementById('btn-export-excel').addEventListener('click', async ()=>
   try{
     const cards = await listAllCards(true);
     cards.sort((a,b)=> a.code.localeCompare(b.code, 'fr', {numeric:true}));
-    const rows = cards.map(c=>{
-      const cat = c.category || categoryOf(c.code);
-      return {
+
+    // One sheet per category; the "Payée" cell is green when paid, red otherwise
+    const PAID_COL = 3; // index of 'Payée' in the row objects below
+    const headerStyle = {font:{bold:true}, fill:{fgColor:{rgb:'EFE3C2'}}};
+    const paidStyle   = {font:{bold:true, color:{rgb:'1E7B45'}}};
+    const unpaidStyle = {font:{bold:true, color:{rgb:'C0392B'}}};
+    const groups = Object.keys(CATEGORIES).map(key => ({
+      name: CATEGORIES[key].label,
+      cards: cards.filter(c => (c.category || categoryOf(c.code)) === key)
+    }));
+    const others = cards.filter(c => !CATEGORIES[c.category || categoryOf(c.code)]);
+    if(others.length) groups.push({name:'Autres cartes', cards:others});
+
+    const wb = XLSX.utils.book_new();
+    groups.forEach(g=>{
+      const rows = g.cards.map(c => ({
         'Code': c.code,
-        'Catégorie': CATEGORIES[cat] ? CATEGORIES[cat].label : '',
         'Montant': c.montant,
         'Nom': c.nom || '',
-        'Payée': c.paye ? 'OUI' : 'non',
+        'Payée': c.paye ? 'OUI' : 'NON',
         'Payée le': c.paye ? timeFmt(c.paye_at) : '',
         'Entrée': c.entree ? 'OUI' : 'non',
         'Entrée le': c.entree ? timeFmt(c.entree_at) : ''
-      };
+      }));
+      const ws = XLSX.utils.json_to_sheet(rows, {header:['Code','Montant','Nom','Payée','Payée le','Entrée','Entrée le']});
+      ws['!cols'] = [{wch:12},{wch:10},{wch:24},{wch:8},{wch:14},{wch:8},{wch:14}];
+      for(let col=0; col<7; col++){
+        const cell = ws[XLSX.utils.encode_cell({r:0, c:col})];
+        if(cell) cell.s = headerStyle;
+      }
+      g.cards.forEach((c, i)=>{
+        const cell = ws[XLSX.utils.encode_cell({r:i+1, c:PAID_COL})];
+        if(cell) cell.s = c.paye ? paidStyle : unpaidStyle;
+      });
+      XLSX.utils.book_append_sheet(wb, ws, g.name);
     });
-    const ws = XLSX.utils.json_to_sheet(rows);
-    ws['!cols'] = [{wch:12},{wch:20},{wch:10},{wch:24},{wch:7},{wch:14},{wch:7},{wch:14}];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Cartes');
     const d = new Date(), p = n => String(n).padStart(2,'0');
     XLSX.writeFile(wb, `cartes-diner-${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}-${p(d.getHours())}h${p(d.getMinutes())}.xlsx`);
     showToast(cards.length + ' cartes exportées');
